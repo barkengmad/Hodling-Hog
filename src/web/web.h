@@ -166,10 +166,11 @@ private:
     void handleLightningConfig(AsyncWebServerRequest* request);
     
     // HTML page generators
+    String generateLandingPage();
     String generateMainPage();
     String generateConfigPage();
-    String generateWalletPage();
-    String generateTransferPage();
+    // String generateWalletPage();      // Commented out - passive mode
+    // String generateTransferPage();    // Commented out - passive mode
     String generateSystemPage();
     String generateCaptivePortalPage();
     String generateLoginPage();

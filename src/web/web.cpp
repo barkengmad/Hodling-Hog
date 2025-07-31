@@ -302,6 +302,30 @@ void WebInterface::handleSystemConfig(AsyncWebServerRequest* request) {
         return;
     }
     
+    bool hasChanges = false;
+    
+    // Get owner name parameter
+    if (request->hasParam("ownerName", true)) {
+        String ownerName = request->getParam("ownerName", true)->value();
+        ownerName.trim(); // Remove leading/trailing spaces
+        
+        // Validate name (allow empty for default)
+        if (ownerName.length() <= 20) {
+            if (ownerName.isEmpty()) {
+                ownerName = "Hodling Hog"; // Reset to default
+            }
+            
+            // Set device name directly in config
+            settings.getConfig().system.deviceName = ownerName;
+            hasChanges = true;
+            Serial.printf("WebInterface: Owner name updated to: %s\n", ownerName.c_str());
+        } else {
+            Serial.printf("WebInterface: Invalid owner name length: %d\n", ownerName.length());
+            request->redirect("/config?error=system");
+            return;
+        }
+    }
+    
     // Get sleep timeout parameter
     if (request->hasParam("sleepTimeout", true)) {
         String sleepTimeoutStr = request->getParam("sleepTimeout", true)->value();
@@ -312,11 +336,9 @@ void WebInterface::handleSystemConfig(AsyncWebServerRequest* request) {
             uint32_t sleepTimeoutMs = sleepTimeoutMinutes * 60000; // Convert to milliseconds
             
             if (settings.setSleepTimeout(sleepTimeoutMs)) {
-                settings.saveConfig();
+                hasChanges = true;
                 Serial.printf("WebInterface: Sleep timeout updated to %u minutes (%u ms)\n", 
                              sleepTimeoutMinutes, sleepTimeoutMs);
-                request->redirect("/config?saved=system");
-                return;
             } else {
                 Serial.println("WebInterface: Failed to save sleep timeout setting");
                 request->redirect("/config?error=system");
@@ -329,8 +351,18 @@ void WebInterface::handleSystemConfig(AsyncWebServerRequest* request) {
         }
     }
     
-    Serial.println("WebInterface: No sleep timeout parameter found");
-    request->redirect("/config?error=system");
+    if (hasChanges) {
+        if (settings.saveConfig()) {
+            Serial.println("WebInterface: System settings saved successfully");
+            request->redirect("/config?saved=system");
+        } else {
+            Serial.println("WebInterface: Failed to save system settings");
+            request->redirect("/config?error=system");
+        }
+    } else {
+        Serial.println("WebInterface: No system settings parameters found");
+        request->redirect("/config?error=system");
+    }
 }
 
 void WebInterface::handleTransactionSigning(AsyncWebServerRequest* request) {
@@ -555,22 +587,9 @@ void WebInterface::setupRoutes() {
         handleConfig(request);
     });
     
-    server.on("/wallet", HTTP_GET, [this](AsyncWebServerRequest* request) {
-        if (!authenticateRequest(request, AuthLevel::BASIC)) {
-            request->redirect("/login");
-            return;
-        }
-        request->send(200, "text/html; charset=utf-8", generateWalletPage());
-    });
+
     
-    // TODO: Fix generateSystemPage function
-    // server.on("/system", HTTP_GET, [this](AsyncWebServerRequest* request) {
-    //     if (!authenticateRequest(request, AuthLevel::ADMIN)) {
-    //         request->redirect("/login");
-    //         return;
-    //     }
-    //     request->send(200, "text/html; charset=utf-8", generateSystemPage());
-    // });
+
     
     server.on("/api/status", HTTP_GET, [this](AsyncWebServerRequest* request) {
         handleSystemInfo(request);
@@ -647,14 +666,15 @@ void WebInterface::handleRoot(AsyncWebServerRequest* request) {
     
     // Check if seed phrase is configured
     if (!settings.isSeedPhraseSet()) {
-        // First time setup - redirect to seed phrase generation
-        request->redirect("/generate-seed");
+        // Show landing page with setup option
+        request->send(200, "text/html; charset=utf-8", generateLandingPage());
         return;
     }
     
     // Check authentication
     if (!authenticateRequest(request, AuthLevel::BASIC)) {
-        request->redirect("/login");
+        // Show landing page with login option
+        request->send(200, "text/html; charset=utf-8", generateLandingPage());
         return;
     }
     
@@ -742,9 +762,9 @@ void WebInterface::handleLogout(AsyncWebServerRequest* request) {
         invalidateSession(sessionToken);
     }
     
-    // Clear cookie and redirect
+    // Clear cookie and redirect to landing page
     AsyncWebServerResponse* response = request->beginResponse(302);
-    response->addHeader("Location", "/login");
+    response->addHeader("Location", "/");
     response->addHeader("Set-Cookie", "session=; Path=/; HttpOnly; Max-Age=0");
     request->send(response);
     
@@ -864,6 +884,164 @@ void WebInterface::handleConfirmSeed(AsyncWebServerRequest* request) {
 }
 
 // HTML generators - simplified
+String WebInterface::generateLandingPage() {
+    // Get owner name (device name) from settings
+    String ownerName = settings.getConfig().system.deviceName;
+    if (ownerName == "Hodling Hog" || ownerName.isEmpty()) {
+        ownerName = "Someone's"; // Default if no owner set
+    } else {
+        ownerName += "'s"; // Add possessive 
+    }
+    
+    bool isSetup = settings.isSeedPhraseSet();
+    
+    String html = "<!DOCTYPE html>";
+    html += "<html>";
+    html += "<head>";
+    html += "<title>" + ownerName + " Hodling Hog</title>";
+    html += "<meta charset='utf-8'>";
+    html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
+    html += "<style>";
+    html += "body { ";
+    html += "font-family: 'Comic Sans MS', Arial, sans-serif; ";
+    html += "margin: 0; ";
+    html += "padding: 20px; ";
+    html += "background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%);";
+    html += "min-height: 100vh;";
+    html += "display: flex;";
+    html += "align-items: center;";
+    html += "justify-content: center;";
+    html += "}";
+    html += ".landing-container {";
+    html += "max-width: 600px;";
+    html += "margin: 0 auto;";
+    html += "background: white;";
+    html += "border-radius: 20px;";
+    html += "box-shadow: 0 15px 35px rgba(0,0,0,0.1);";
+    html += "padding: 3rem;";
+    html += "text-align: center;";
+    html += "border: 3px solid #ff6b9d;";
+    html += "}";
+    html += ".logo {";
+    html += "font-size: 4rem;";
+    html += "margin-bottom: 1rem;";
+    html += "color: #333;";
+    html += "}";
+    html += ".title {";
+    html += "color: #ff6b9d;";
+    html += "font-size: 2.5rem;";
+    html += "font-weight: bold;";
+    html += "margin-bottom: 1rem;";
+    html += "}";
+    html += ".subtitle {";
+    html += "color: #666;";
+    html += "font-size: 1.3rem;";
+    html += "margin-bottom: 2rem;";
+    html += "line-height: 1.5;";
+    html += "}";
+    html += ".description {";
+    html += "background: #e6f3ff;";
+    html += "color: #0066cc;";
+    html += "padding: 1.5rem;";
+    html += "border-radius: 15px;";
+    html += "margin: 2rem 0;";
+    html += "border-left: 4px solid #0066cc;";
+    html += "font-size: 1.1rem;";
+    html += "line-height: 1.6;";
+    html += "text-align: left;";
+    html += "}";
+    html += ".action-btn {";
+    html += "background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);";
+    html += "color: white;";
+    html += "padding: 1rem 2rem;";
+    html += "border: none;";
+    html += "border-radius: 25px;";
+    html += "font-size: 1.2rem;";
+    html += "cursor: pointer;";
+    html += "transition: all 0.3s;";
+    html += "margin: 0.5rem;";
+    html += "font-family: inherit;";
+    html += "font-weight: bold;";
+    html += "text-decoration: none;";
+    html += "display: inline-block;";
+    html += "}";
+    html += ".action-btn:hover {";
+    html += "transform: translateY(-2px);";
+    html += "box-shadow: 0 5px 15px rgba(0,0,0,0.2);";
+    html += "}";
+    html += ".action-btn.primary {";
+    html += "background: linear-gradient(135deg, #28a745 0%, #20c997 100%);";
+    html += "}";
+    html += ".features {";
+    html += "display: grid;";
+    html += "grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));";
+    html += "gap: 1rem;";
+    html += "margin: 2rem 0;";
+    html += "}";
+    html += ".feature {";
+    html += "background: #f8f9fa;";
+    html += "padding: 1rem;";
+    html += "border-radius: 10px;";
+    html += "font-size: 0.9rem;";
+    html += "}";
+    html += ".feature-icon {";
+    html += "font-size: 2rem;";
+    html += "margin-bottom: 0.5rem;";
+    html += "}";
+    html += "</style>";
+    html += "</head>";
+    html += "<body>";
+    html += "<div class='landing-container'>";
+    html += "<div class='logo'>🐷⚡</div>";
+    html += "<div class='title'>" + ownerName + " Hodling Hog</div>";
+    html += "<div class='subtitle'>Your Personal Bitcoin Piggy Bank</div>";
+    
+    html += "<div class='description'>";
+    html += "<strong>Welcome to Hodling Hog!</strong><br><br>";
+    html += "This is a kid-friendly Bitcoin monitoring device that helps you track your Bitcoin savings. ";
+    html += "Think of it as your digital piggy bank that shows how much Bitcoin you have in two places:<br><br>";
+    html += "• <strong>Lightning Wallet</strong> - For small amounts and quick payments<br>";
+    html += "• <strong>Cold Storage</strong> - For larger amounts kept extra safe<br><br>";
+    html += "Your Hodling Hog keeps an eye on your Bitcoin 24/7 so you can watch your savings grow!";
+    html += "</div>";
+    
+    html += "<div class='features'>";
+    html += "<div class='feature'>";
+    html += "<div class='feature-icon'>👀</div>";
+    html += "<strong>Watch Only</strong><br>";
+    html += "Safely monitor your Bitcoin without any risk";
+    html += "</div>";
+    html += "<div class='feature'>";
+    html += "<div class='feature-icon'>⚡</div>";
+    html += "<strong>Lightning Ready</strong><br>";
+    html += "Track Lightning wallet balance and transactions";
+    html += "</div>";
+    html += "<div class='feature'>";
+    html += "<div class='feature-icon'>❄️</div>";
+    html += "<strong>Cold Storage</strong><br>";
+    html += "Monitor your cold storage Bitcoin addresses";
+    html += "</div>";
+    html += "<div class='feature'>";
+    html += "<div class='feature-icon'>📱</div>";
+    html += "<strong>Easy Setup</strong><br>";
+    html += "Simple web interface for all family members";
+    html += "</div>";
+    html += "</div>";
+    
+    if (isSetup) {
+        html += "<p style='color: #666; margin: 1rem 0;'>This Hodling Hog has already been set up. Enter your secret words to access it.</p>";
+        html += "<a href='/login' class='action-btn primary'>🔓 Login to My Piggy Bank</a>";
+    } else {
+        html += "<p style='color: #666; margin: 1rem 0;'>Let's get your Hodling Hog set up! We'll create some special words to keep it secure.</p>";
+        html += "<a href='/generate-seed' class='action-btn primary'>🚀 Set Up My Hodling Hog</a>";
+    }
+    
+    html += "</div>";
+    html += "</body>";
+    html += "</html>";
+    return html;
+}
+
 String WebInterface::generateMainPage() {
     // Access the global wallet instances
     
@@ -880,10 +1058,18 @@ String WebInterface::generateMainPage() {
     String lightningAddress = settings.getConfig().lightning.receiveAddress;
     bool hasLightningWallet = !lightningAddress.isEmpty();
     
+    // Get owner name for title
+    String ownerName = settings.getConfig().system.deviceName;
+    if (ownerName == "Hodling Hog" || ownerName.isEmpty()) {
+        ownerName = "My";
+    } else {
+        ownerName += "'s";
+    }
+    
     String html = "<!DOCTYPE html>";
     html += "<html>";
     html += "<head>";
-    html += "<title>My Bitcoin Piggy Bank - Hodling Hog</title>";
+    html += "<title>" + ownerName + " Bitcoin Piggy Bank - Hodling Hog</title>";
     html += "<style>";
     html += "body { ";
     html += "font-family: 'Comic Sans MS', Arial, sans-serif; ";
@@ -1018,15 +1204,13 @@ String WebInterface::generateMainPage() {
     html += "<body>";
     html += "<div class='container'>";
     html += "<div class='header'>";
-    html += "<div class='logo'>Hodling Hog</div>";
+    html += "<div class='logo'>" + (ownerName == "My" ? "Hodling Hog" : ownerName.substring(0, ownerName.length()-2) + "'s Hodling Hog") + "</div>";
     html += "<div class='subtitle'>Your Bitcoin Piggy Bank is Secure!</div>";
     html += "</div>";
     html += "<div class='nav'>";
     html += "<div class='nav-links'>";
     html += "<a href='/'>My Piggy Bank</a>";
     html += "<a href='/config'>Settings</a>";
-    html += "<a href='/wallet'>Wallet</a>";
-    html += "<a href='/system'>System</a>";
     html += "</div>";
     html += "<div style='display: flex; align-items: center; gap: 1rem;'>";
     html += "<span class='auth-status'>Logged In!</span>";
@@ -1041,14 +1225,6 @@ String WebInterface::generateMainPage() {
     html += "<div class='status-card'>";
     html += "<div class='status-title'>Cold Storage</div>";
     html += "<div class='status-value'>" + btcString + "</div>";
-    html += "</div>";
-    html += "<div class='status-card'>";
-    html += "<div class='status-title'>System</div>";
-    html += "<div class='status-value'>Online</div>";
-    html += "</div>";
-    html += "<div class='status-card'>";
-    html += "<div class='status-title'>WiFi</div>";
-    html += "<div class='status-value'>Connected</div>";
     html += "</div>";
     html += "</div>";
     html += "<div class='welcome-message'>";
@@ -1106,8 +1282,6 @@ String WebInterface::generateConfigPage() {
     html += "<div class='nav'>";
     html += "<a href='/'>Home</a>";
     html += "<a href='/config' class='active'>Settings</a>";
-    html += "<a href='/wallet'>Wallet</a>";
-    html += "<a href='/system'>System</a>";
     html += "</div>";
     
     // Add success/error messages based on query parameters
@@ -1215,10 +1389,22 @@ String WebInterface::generateConfigPage() {
     // System Settings Section
     html += "<div class='section'>";
     html += "<div class='section-title'>System Settings</div>";
+    // Show current device name (owner name)
+    String currentDeviceName = config.system.deviceName;
+    if (currentDeviceName == "Hodling Hog" || currentDeviceName.isEmpty()) {
+        html += "<div class='current-value'>Current Owner: Not set (showing as default)</div>";
+    } else {
+        html += "<div class='current-value'>Current Owner: " + currentDeviceName + "</div>";
+    }
     // Show current sleep timeout
     uint32_t currentSleepTimeoutMinutes = config.power.sleepTimeout / 60000; // Convert ms to minutes
     html += "<div class='current-value'>Current Sleep Timeout: " + String(currentSleepTimeoutMinutes) + " minutes</div>";
     html += "<form method='POST' action='/api/config/system'>";
+    html += "<div class='form-group'>";
+    html += "<label class='form-label'>Owner Name:</label>";
+    html += "<input type='text' name='ownerName' class='form-input' placeholder='Enter your name (e.g., Alice)' value='" + (currentDeviceName == "Hodling Hog" ? "" : currentDeviceName) + "' maxlength='20'>";
+    html += "<small style='color:#666;'>This will show as \"YourName's Hodling Hog\" on the device</small>";
+    html += "</div>";
     html += "<div class='form-group'>";
     html += "<label class='form-label'>Sleep Timeout (minutes):</label>";
     html += "<input type='number' name='sleepTimeout' class='form-input' placeholder='3' value='" + String(currentSleepTimeoutMinutes) + "' min='1' max='60' required>";
@@ -1261,6 +1447,8 @@ String WebInterface::generateConfigPage() {
     return html;
 }
 
+// Commented out - wallet functionality removed for passive mode
+/*
 String WebInterface::generateWalletPage() {
     updateWebActivity(); // Reset sleep timer on web activity
     
@@ -1408,8 +1596,6 @@ String WebInterface::generateWalletPage() {
         <div class="nav">
             <a href="/">Home</a>
             <a href="/config">Settings</a>
-            <a href="/wallet" class="active">Wallet</a>
-            <a href="/system">System</a>
         </div>
 
         <div class="balance-grid">
@@ -1442,247 +1628,17 @@ String WebInterface::generateWalletPage() {
     html += "</div></body></html>";
     return html;
 }
+*/
 
+// Commented out - transfer functionality removed for passive mode
+/*
 String WebInterface::generateTransferPage() {
     return "<html><body><h1>Transfer</h1></body></html>";
 }
+*/
 
 String WebInterface::generateSystemPage() {
-    return "<!DOCTYPE html><html><head><title>System</title></head><body><h1>System Page</h1><a href='/'>Home</a> | <a href='/config'>Settings</a></body></html>";
-}
-
-String WebInterface::generateCaptivePortalPage() {
-    return generateMainPage();
-}
-
-String WebInterface::generateLoginPage() {
-    return R"(<!DOCTYPE html>
-<html>
-<head>
-    <title>Login - Hodling Hog</title>
-    <meta charset="utf-8">
-    <style>
-        body { 
-            font-family: Arial, sans-serif; 
-            margin: 0; 
-            padding: 20px; 
-            background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%);
-            min-height: 100vh;
-        }
-        .container {
-            max-width: 900px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
-            padding: 2rem;
-            border: 3px solid #ff6b9d;
-        }
-        .header {
-            text-align: center;
-            margin-bottom: 2rem;
-            border-bottom: 3px solid #f0f0f0;
-            padding-bottom: 1rem;
-        }
-        .logo {
-            font-size: 3rem;
-            color: #333;
-        }
-        .subtitle {
-            color: #ff6b9d;
-            font-size: 1.3rem;
-            font-weight: bold;
-        }
-        .nav {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 1rem;
-            border-radius: 15px;
-            margin-bottom: 2rem;
-            text-align: center;
-        }
-        .nav a {
-            color: white;
-            text-decoration: none;
-            padding: 0.5rem 1rem;
-            margin: 0 0.5rem;
-            border-radius: 10px;
-            display: inline-block;
-            font-weight: bold;
-        }
-        .nav a.active {
-            background: rgba(255,255,255,0.3);
-        }
-        .section {
-            background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
-            margin-bottom: 2rem;
-            border-radius: 15px;
-            border-left: 5px solid #667eea;
-            padding: 2rem;
-        }
-        .section-title {
-            font-size: 1.5rem;
-            color: #333;
-            margin-bottom: 1rem;
-            font-weight: bold;
-        }
-        .status-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            margin-bottom: 1rem;
-        }
-        .status-card {
-            background: white;
-            padding: 1.5rem;
-            border-radius: 10px;
-            text-align: center;
-            border: 2px solid #ddd;
-        }
-        .status-title {
-            font-weight: bold;
-            color: #333;
-            margin-bottom: 0.5rem;
-        }
-        .status-value {
-            font-size: 1.5rem;
-            color: #667eea;
-            font-weight: bold;
-            margin-bottom: 0.5rem;
-        }
-        .status-detail {
-            font-size: 0.8rem;
-            color: #666;
-        }
-        .action-btn {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 1rem 1.5rem;
-            border: none;
-            border-radius: 15px;
-            font-size: 1rem;
-            cursor: pointer;
-            font-weight: bold;
-            margin: 0.5rem;
-            display: inline-block;
-        }
-        .action-btn.danger {
-            background: linear-gradient(135deg, #ff6b9d 0%, #e55a87 100%);
-        }
-        .action-btn.secondary {
-            background: linear-gradient(135deg, #ffeaa7 0%, #fab1a0 100%);
-            color: #333;
-        }
-        .info-box {
-            background: #e6f3ff;
-            color: #0066cc;
-            padding: 1rem;
-            border-radius: 10px;
-            margin-bottom: 1rem;
-            border-left: 4px solid #0066cc;
-            font-size: 0.9rem;
-        }
-        .warning-box {
-            background: #fff3cd;
-            color: #856404;
-            padding: 1rem;
-            border-radius: 10px;
-            margin-bottom: 1rem;
-            border-left: 4px solid #ffc107;
-            font-size: 0.9rem;
-        }
-        .error-box {
-            background: #f8d7da;
-            color: #721c24;
-            padding: 1rem;
-            border-radius: 10px;
-            margin-bottom: 1rem;
-            border-left: 4px solid #dc3545;
-            font-size: 0.9rem;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <div class="logo">Hodling Hog</div>
-            <div class="subtitle">System Information & Controls</div>
-        </div>
-        
-        <div class="nav">
-            <a href="/">Home</a>
-            <a href="/config">Settings</a>
-            <a href="/wallet">Wallet</a>
-            <a href="/system" class="active">System</a>
-        </div>
-
-        <div class="section">
-            <div class="section-title">System Status</div>
-            <div class="status-grid">
-                <div class="status-card">
-                    <div class="status-title">Power</div>
-                    <div class="status-value">85%</div>
-                    <div class="status-detail">Battery Level</div>
-                </div>
-                <div class="status-card">
-                    <div class="status-title">WiFi</div>
-                    <div class="status-value">-45 dBm</div>
-                    <div class="status-detail">Signal Strength</div>
-                </div>
-                <div class="status-card">
-                    <div class="status-title">Memory</div>
-                    <div class="status-value">64%</div>
-                    <div class="status-detail">RAM Usage</div>
-                </div>
-                <div class="status-card">
-                    <div class="status-title">Uptime</div>
-                    <div class="status-value">2h 14m</div>
-                    <div class="status-detail">Since Last Boot</div>
-                </div>
-            </div>
-        </div>
-
-        <div class="section">
-            <div class="section-title">Device Information</div>
-            <div class="info-box">
-                <strong>Device Model:</strong> Hodling Hog v1.0<br>
-                <strong>Firmware Version:</strong> 1.2.3<br>
-                <strong>Hardware Revision:</strong> Rev B<br>
-                <strong>Serial Number:</strong> HH-2024-001337<br>
-                <strong>Chip Model:</strong> ESP32-S3<br>
-                <strong>Flash Size:</strong> 4MB<br>
-                <strong>WiFi MAC:</strong> AA:BB:CC:DD:EE:FF
-            </div>
-        </div>
-
-        <div class="section">
-            <div class="section-title">System Maintenance</div>
-            <button class="action-btn secondary">Check for Updates</button>
-            <button class="action-btn secondary">Download Logs</button>
-            <button class="action-btn secondary">Run Diagnostics</button>
-            <button class="action-btn secondary">Backup Settings</button>
-        </div>
-
-        <div class="section">
-            <div class="section-title">System Controls</div>
-            <div class="warning-box">
-                <strong>Warning:</strong> These actions will affect system operation. Use with caution!
-            </div>
-            <button class="action-btn">Restart System</button>
-            <button class="action-btn">Sleep Mode</button>
-            <button class="action-btn secondary">Clear Cache</button>
-        </div>
-
-        <div class="section">
-            <div class="section-title">Danger Zone</div>
-            <div class="error-box">
-                <strong>DANGER:</strong> These actions are irreversible and will erase all data!
-            </div>
-            <button class="action-btn danger">Factory Reset</button>
-            <button class="action-btn danger">Erase Wallet Data</button>
-        </div>
-    </div>
-</body>
-</html>)";
+    return "<!DOCTYPE html><html><head><title>System</title></head><body><h1>System Page Not Available</h1><a href='/'>Home</a> | <a href='/config'>Settings</a></body></html>";
 }
 
 String WebInterface::generateCaptivePortalPage() {
