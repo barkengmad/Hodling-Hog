@@ -2,6 +2,8 @@
 #include "../settings/settings.h"
 #include "../wallet/wallet.h"
 #include "../cold/cold.h"
+#include "../utils/utils.h"
+#include "../display/display.h"
 
 // External function declarations from main.cpp
 extern void updateBalances();
@@ -10,6 +12,7 @@ extern unsigned long lastInputTime;
 
 // External instances
 extern class LightningWallet lightningWallet;
+extern DisplayManager displayMgr;
 
 // Activity tracking helper
 void updateWebActivity() {
@@ -319,6 +322,9 @@ void WebInterface::handleSystemConfig(AsyncWebServerRequest* request) {
             settings.getConfig().system.deviceName = ownerName;
             hasChanges = true;
             Serial.printf("WebInterface: Owner name updated to: %s\n", ownerName.c_str());
+            
+            // Update display manager immediately so e-ink screen shows new name
+            displayMgr.setDeviceName(ownerName);
         } else {
             Serial.printf("WebInterface: Invalid owner name length: %d\n", ownerName.length());
             request->redirect("/config?error=system");
@@ -886,11 +892,12 @@ void WebInterface::handleConfirmSeed(AsyncWebServerRequest* request) {
 // HTML generators - simplified
 String WebInterface::generateLandingPage() {
     // Get owner name (device name) from settings
-    String ownerName = settings.getConfig().system.deviceName;
-    if (ownerName == "Hodling Hog" || ownerName.isEmpty()) {
-        ownerName = "Someone's"; // Default if no owner set
+        String deviceName = settings.getConfig().system.deviceName;
+    String ownerTitle;
+    if (deviceName == "Hodling Hog" || deviceName.isEmpty()) {
+        ownerTitle = "My Hodling Hog";
     } else {
-        ownerName += "'s"; // Add possessive 
+        ownerTitle = deviceName + "'s Hodling Hog";
     }
     
     bool isSetup = settings.isSeedPhraseSet();
@@ -898,7 +905,7 @@ String WebInterface::generateLandingPage() {
     String html = "<!DOCTYPE html>";
     html += "<html>";
     html += "<head>";
-    html += "<title>" + ownerName + " Hodling Hog</title>";
+    html += "<title>" + ownerTitle + "</title>";
     html += "<meta charset='utf-8'>";
     html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
     html += "<style>";
@@ -993,7 +1000,7 @@ String WebInterface::generateLandingPage() {
     html += "<body>";
     html += "<div class='landing-container'>";
     html += "<div class='logo'>🐷⚡</div>";
-    html += "<div class='title'>" + ownerName + " Hodling Hog</div>";
+    html += "<div class='title'>" + ownerTitle + "</div>";
     html += "<div class='subtitle'>Your Personal Bitcoin Piggy Bank</div>";
     
     html += "<div class='description'>";
@@ -1049,27 +1056,33 @@ String WebInterface::generateMainPage() {
     LightningBalance lnBalance = lightningWallet.getBalance();
     ColdBalance coldBalance = coldStorage.getBalance();
     
-    // Convert satoshis to BTC for display
-    float btcBalance = coldBalance.valid ? (float)coldBalance.total / 100000000.0 : 0.0;
-    String btcString = coldBalance.valid ? String(btcBalance, 8) + " BTC" : "-- BTC";
-    String lightningString = lnBalance.valid ? String(lnBalance.total) + " sats" : "-- sats";
+    // Format all balances in Sats with comma separators
+    String coldSatsString = coldBalance.valid ? utils.formatNumber(coldBalance.total) + " sats" : "-- sats";
+    String lightningSatsString = lnBalance.valid ? utils.formatNumber(lnBalance.total) + " sats" : "-- sats";
+    
+    // Calculate total balance
+    uint64_t totalSats = 0;
+    if (coldBalance.valid) totalSats += coldBalance.total;
+    if (lnBalance.valid) totalSats += lnBalance.total;
+    String totalSatsString = (coldBalance.valid || lnBalance.valid) ? utils.formatNumber(totalSats) + " sats" : "-- sats";
     
     // Get Lightning address for display
     String lightningAddress = settings.getConfig().lightning.receiveAddress;
     bool hasLightningWallet = !lightningAddress.isEmpty();
     
-    // Get owner name for title
-    String ownerName = settings.getConfig().system.deviceName;
-    if (ownerName == "Hodling Hog" || ownerName.isEmpty()) {
-        ownerName = "My";
+    // Get device name for title
+    String deviceName = settings.getConfig().system.deviceName;
+    String ownerTitle;
+    if (deviceName == "Hodling Hog" || deviceName.isEmpty()) {
+        ownerTitle = "My Hodling Hog";
     } else {
-        ownerName += "'s";
+        ownerTitle = deviceName + "'s Hodling Hog";
     }
     
     String html = "<!DOCTYPE html>";
     html += "<html>";
     html += "<head>";
-    html += "<title>" + ownerName + " Bitcoin Piggy Bank - Hodling Hog</title>";
+    html += "<title>" + ownerTitle + " - Bitcoin Piggy Bank</title>";
     html += "<style>";
     html += "body { ";
     html += "font-family: 'Comic Sans MS', Arial, sans-serif; ";
@@ -1204,7 +1217,7 @@ String WebInterface::generateMainPage() {
     html += "<body>";
     html += "<div class='container'>";
     html += "<div class='header'>";
-    html += "<div class='logo'>" + (ownerName == "My" ? "Hodling Hog" : ownerName.substring(0, ownerName.length()-2) + "'s Hodling Hog") + "</div>";
+    html += "<div class='logo'>" + ownerTitle + "</div>";
     html += "<div class='subtitle'>Your Bitcoin Piggy Bank is Secure!</div>";
     html += "</div>";
     html += "<div class='nav'>";
@@ -1217,14 +1230,20 @@ String WebInterface::generateMainPage() {
     html += "<a href='/logout' class='logout-btn'>Logout</a>";
     html += "</div>";
     html += "</div>";
+    // Total Sats display
+    html += "<div class='status-card' style='margin-bottom: 1rem; background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 50%, #fecfef 100%);'>";
+    html += "<div class='status-title' style='color: #333; font-weight: bold;'>Total Sats</div>";
+    html += "<div class='status-value' style='color: #333; font-size: 1.5rem; font-weight: bold;'>" + totalSatsString + "</div>";
+    html += "</div>";
+    
     html += "<div class='status-grid'>";
     html += "<div class='status-card'>";
     html += "<div class='status-title'>Lightning Sats</div>";
-    html += "<div class='status-value'>" + lightningString + "</div>";
+    html += "<div class='status-value'>" + lightningSatsString + "</div>";
     html += "</div>";
     html += "<div class='status-card'>";
-    html += "<div class='status-title'>Cold Storage</div>";
-    html += "<div class='status-value'>" + btcString + "</div>";
+    html += "<div class='status-title'>Cold Storage Sats</div>";
+    html += "<div class='status-value'>" + coldSatsString + "</div>";
     html += "</div>";
     html += "</div>";
     html += "<div class='welcome-message'>";
@@ -1321,7 +1340,12 @@ String WebInterface::generateConfigPage() {
     html += "</div>";
     html += "<div class='form-group'>";
     html += "<label class='form-label'>Password</label>";
-    html += "<input type='password' name='password' class='form-input' placeholder='WiFi Password' value='" + config.wifi.password + "'>";
+    // Show asterisks for existing password, but allow field to be populated for editing
+    String passwordDisplay = config.wifi.password.isEmpty() ? "" : String("*").c_str();
+    for (int i = 1; i < config.wifi.password.length(); i++) {
+        passwordDisplay += "*";
+    }
+    html += "<input type='password' name='password' class='form-input' placeholder='" + (config.wifi.password.isEmpty() ? "WiFi Password" : "Current: " + passwordDisplay) + "' value=''>";
     html += "</div>";
     html += "</div>";
     html += "<button type='submit' class='save-btn'>Save WiFi Settings</button>";
@@ -1389,13 +1413,15 @@ String WebInterface::generateConfigPage() {
     // System Settings Section
     html += "<div class='section'>";
     html += "<div class='section-title'>System Settings</div>";
-    // Show current device name (owner name)
+    // Show current device name formatted as it appears on screen
     String currentDeviceName = config.system.deviceName;
+    String currentDisplayName;
     if (currentDeviceName == "Hodling Hog" || currentDeviceName.isEmpty()) {
-        html += "<div class='current-value'>Current Owner: Not set (showing as default)</div>";
+        currentDisplayName = "My Hodling Hog";
     } else {
-        html += "<div class='current-value'>Current Owner: " + currentDeviceName + "</div>";
+        currentDisplayName = currentDeviceName + "'s Hodling Hog";
     }
+    html += "<div class='current-value'>Current Display Name: " + currentDisplayName + "</div>";
     // Show current sleep timeout
     uint32_t currentSleepTimeoutMinutes = config.power.sleepTimeout / 60000; // Convert ms to minutes
     html += "<div class='current-value'>Current Sleep Timeout: " + String(currentSleepTimeoutMinutes) + " minutes</div>";

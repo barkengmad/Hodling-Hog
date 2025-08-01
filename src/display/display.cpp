@@ -1,4 +1,5 @@
 #include "display.h"
+#include "../utils/utils.h"
 #include <Arduino.h>
 
 // Global instance
@@ -6,10 +7,16 @@ DisplayManager displayMgr;
 
 DisplayManager::DisplayManager() 
     : display(GxEPD2_154_D67(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY)) {
-    currentScreen = ScreenType::BOOT_SCREEN;
+    currentScreen = ScreenType::SETUP_WELCOME;
     initialized = false;
     fastUpdateMode = false;
     displayBrightness = 128;
+    
+    // Device and status initialization
+    deviceSetup = false;
+    deviceName = "Hodling Hog";
+    setupIP = "192.168.4.1";
+    wifiConnected = false;
     
     // Initialize balance data
     balanceData.lightningBalance = 0;
@@ -24,7 +31,7 @@ void DisplayManager::init() {
     Serial.println("DisplayManager: Initializing e-paper display");
     
     // Initialize SPI and display
-    display.init(115200);
+    display.init();
     display.setRotation(0);
     display.setFont(&FreeMonoBold9pt7b);
     display.setTextColor(GxEPD_BLACK);
@@ -40,20 +47,17 @@ void DisplayManager::showScreen(ScreenType screen) {
     Serial.printf("DisplayManager: Showing screen %d\n", (int)screen);
     
     switch (screen) {
+        case ScreenType::SETUP_WELCOME:
+            drawSetupWelcomeScreen();
+            break;
         case ScreenType::LIGHTNING_BALANCE:
             drawLightningBalanceScreen();
             break;
         case ScreenType::COLD_BALANCE:
             drawColdBalanceScreen();
             break;
-        case ScreenType::COMBINED_BALANCE:
-            drawCombinedBalanceScreen();
-            break;
-        case ScreenType::CONFIG_INFO:
-            drawConfigInfoScreen("192.168.4.1");
-            break;
-        case ScreenType::BOOT_SCREEN:
-            drawBootScreen();
+        case ScreenType::TOTAL_BALANCE:
+            drawTotalBalanceScreen();
             break;
         case ScreenType::ERROR_SCREEN:
             drawErrorScreen("System Error");
@@ -75,84 +79,53 @@ void DisplayManager::updateQRData(const QRData& qrData) {
     this->qrData = qrData;
 }
 
-void DisplayManager::showBootScreen() {
-    Serial.println("DisplayManager: Showing boot screen");
-    drawBootScreen();
-}
-
 void DisplayManager::showErrorScreen(const String& error) {
     Serial.printf("DisplayManager: Showing error: %s\n", error.c_str());
     drawErrorScreen(error);
 }
 
-void DisplayManager::showConfigInfo(const String& ipAddress) {
-    Serial.printf("DisplayManager: Showing config info - IP: %s\n", ipAddress.c_str());
-    drawConfigInfoScreen(ipAddress);
-}
-
-void DisplayManager::showWiFiStatus(bool connected, const String& status) {
-    Serial.printf("DisplayManager: WiFi %s - %s\n", 
-                  connected ? "Connected" : "Disconnected", status.c_str());
+// Screen cycling for setup pages only
+void DisplayManager::nextSetupScreen() {
+    if (!deviceSetup) return; // Only cycle when setup is complete
     
-    // Update status display (simplified)
-    display.setPartialWindow(0, 0, DISPLAY_WIDTH, 20);
-    display.firstPage();
-    do {
-        display.fillScreen(GxEPD_WHITE);
-        display.setCursor(5, 15);
-        display.print(connected ? "WiFi: OK" : "WiFi: --");
-        if (status.length() > 0) {
-            // Center the IP address or use smaller font if needed
-            if (status.length() > 12) {
-                // Use smaller positioning for longer IP addresses
-                display.setCursor(60, 15);
-            } else {
-                display.setCursor(80, 15);
-            }
-            display.print(status);
-        }
-    } while (display.nextPage());
-}
-
-// New method to show IP address with full screen and proper duration
-void DisplayManager::showIPAddress(const String& ipAddress, uint32_t displayDurationMs) {
-    Serial.printf("DisplayManager: Showing IP address: %s for %dms\n", ipAddress.c_str(), displayDurationMs);
-    
-    display.setFullWindow();
-    display.firstPage();
-    do {
-        display.fillScreen(GxEPD_WHITE);
-        
-        // Title
-        display.setFont(&FreeMonoBold12pt7b);
-        centerText("WiFi Connected!", 60, &FreeMonoBold12pt7b);
-        
-        // IP Address - use appropriate font size
-        display.setFont(&FreeMonoBold9pt7b);
-        centerText("Device IP Address:", 100, &FreeMonoBold9pt7b);
-        
-        // Check if IP fits with current font, if not use smaller positioning
-        int16_t ipWidth = getTextWidth(ipAddress, &FreeMonoBold9pt7b);
-        if (ipWidth > (DISPLAY_WIDTH - 20)) {
-            // IP is too long, center it carefully
-            centerText(ipAddress, 130, &FreeMonoBold9pt7b);
-        } else {
-            // IP fits fine, center it normally  
-            centerText(ipAddress, 130, &FreeMonoBold9pt7b);
-        }
-        
-        // Additional info
-        display.setFont(&FreeMonoBold9pt7b);
-        centerText("Ready to accept", 160, &FreeMonoBold9pt7b);
-        centerText("connections", 180, &FreeMonoBold9pt7b);
-        
-    } while (display.nextPage());
-    
-    // Keep the IP address on screen for the specified duration
-    if (displayDurationMs > 0) {
-        delay(displayDurationMs);
+    switch (currentScreen) {
+        case ScreenType::LIGHTNING_BALANCE:
+            showScreen(ScreenType::COLD_BALANCE);
+            break;
+        case ScreenType::COLD_BALANCE:
+            showScreen(ScreenType::TOTAL_BALANCE);
+            break;
+        case ScreenType::TOTAL_BALANCE:
+            showScreen(ScreenType::LIGHTNING_BALANCE);
+            break;
+        default:
+            showScreen(ScreenType::LIGHTNING_BALANCE);
+            break;
     }
 }
+
+void DisplayManager::previousSetupScreen() {
+    if (!deviceSetup) return; // Only cycle when setup is complete
+    
+    switch (currentScreen) {
+        case ScreenType::LIGHTNING_BALANCE:
+            showScreen(ScreenType::TOTAL_BALANCE);
+            break;
+        case ScreenType::COLD_BALANCE:
+            showScreen(ScreenType::LIGHTNING_BALANCE);
+            break;
+        case ScreenType::TOTAL_BALANCE:
+            showScreen(ScreenType::COLD_BALANCE);
+            break;
+        default:
+            showScreen(ScreenType::LIGHTNING_BALANCE);
+            break;
+    }
+}
+
+
+
+
 
 void DisplayManager::clear() {
     if (!initialized) return;
@@ -173,39 +146,7 @@ void DisplayManager::wake() {
     }
 }
 
-void DisplayManager::nextScreen() {
-    switch (currentScreen) {
-        case ScreenType::LIGHTNING_BALANCE:
-            showScreen(ScreenType::COLD_BALANCE);
-            break;
-        case ScreenType::COLD_BALANCE:
-            showScreen(ScreenType::COMBINED_BALANCE);
-            break;
-        case ScreenType::COMBINED_BALANCE:
-            showScreen(ScreenType::LIGHTNING_BALANCE);
-            break;
-        default:
-            showScreen(ScreenType::LIGHTNING_BALANCE);
-            break;
-    }
-}
 
-void DisplayManager::previousScreen() {
-    switch (currentScreen) {
-        case ScreenType::LIGHTNING_BALANCE:
-            showScreen(ScreenType::COMBINED_BALANCE);
-            break;
-        case ScreenType::COLD_BALANCE:
-            showScreen(ScreenType::LIGHTNING_BALANCE);
-            break;
-        case ScreenType::COMBINED_BALANCE:
-            showScreen(ScreenType::COLD_BALANCE);
-            break;
-        default:
-            showScreen(ScreenType::LIGHTNING_BALANCE);
-            break;
-    }
-}
 
 bool DisplayManager::isDisplayBusy() const {
     // Stub implementation - in real implementation would check display busy state
@@ -220,29 +161,56 @@ void DisplayManager::setUpdateMode(bool fastUpdate) {
     fastUpdateMode = fastUpdate;
 }
 
-// Private drawing methods - simplified implementations
+// New drawing methods implementation
+void DisplayManager::drawSetupWelcomeScreen() {
+    display.setFullWindow();
+    display.firstPage();
+    do {
+        display.fillScreen(GxEPD_WHITE);
+        
+        // WiFi indicator in top right
+        drawWiFiIndicator();
+        
+        // Welcome message
+        display.setFont(&FreeMonoBold12pt7b);
+        centerText("Welcome to your", 40, &FreeMonoBold12pt7b);
+        centerText("Hodling Hog", 65, &FreeMonoBold12pt7b);
+        
+        display.setFont(&FreeMonoBold9pt7b);
+        centerText("Saving your future,", 95, &FreeMonoBold9pt7b);
+        centerText("one oink at a time!", 115, &FreeMonoBold9pt7b);
+        
+        // Setup instruction
+        display.setFont(&FreeMonoBold9pt7b);
+        centerText("Setup at", 150, &FreeMonoBold9pt7b);
+        display.setFont(&FreeMonoBold12pt7b);
+        centerText(setupIP, 175, &FreeMonoBold12pt7b);
+        
+    } while (display.nextPage());
+}
+
 void DisplayManager::drawLightningBalanceScreen() {
     display.setFullWindow();
     display.firstPage();
     do {
         display.fillScreen(GxEPD_WHITE);
         
-        // Title
-        display.setFont(&FreeMonoBold12pt7b);
-        centerText("⚡ LIGHTNING", 30, &FreeMonoBold12pt7b);
+        // WiFi indicator and device title
+        drawWiFiIndicator();
+        drawDeviceTitle();
         
-        // Balance
-        display.setFont(&FreeMonoBold18pt7b);
-        String balanceStr = formatBalance(balanceData.lightningBalance);
-        centerText(balanceStr, 80, &FreeMonoBold18pt7b);
+        // Page content
+        display.setFont(&FreeMonoBold12pt7b);
+        centerText("Lightning Wallet", 80, &FreeMonoBold12pt7b);
+        centerText("Balance", 105, &FreeMonoBold12pt7b);
+        
+        // Balance display with comma formatting
+        display.setFont(&FreeMonoBold9pt7b);
+        String balanceStr = utils.formatNumber(balanceData.lightningBalance) + " sats";
+        centerText(balanceStr, 140, &FreeMonoBold9pt7b);
         
         // Status
-        display.setFont(&FreeMonoBold9pt7b);
-        centerText(balanceData.lightningValid ? "✓ Updated" : "✗ Offline", 120, &FreeMonoBold9pt7b);
-        
-        // QR placeholder
-        display.drawRect(60, 140, 80, 80, GxEPD_BLACK);
-        centerText("QR Code", 185, &FreeMonoBold9pt7b);
+        centerText(balanceData.lightningValid ? "✓ Updated" : "✗ Offline", 165, &FreeMonoBold9pt7b);
         
     } while (display.nextPage());
 }
@@ -253,88 +221,54 @@ void DisplayManager::drawColdBalanceScreen() {
     do {
         display.fillScreen(GxEPD_WHITE);
         
-        // Title
-        display.setFont(&FreeMonoBold12pt7b);
-        centerText("❄ COLD STORAGE", 30, &FreeMonoBold12pt7b);
+        // WiFi indicator and device title
+        drawWiFiIndicator();
+        drawDeviceTitle();
         
-        // Balance
-        display.setFont(&FreeMonoBold18pt7b);
-        String balanceStr = formatBalance(balanceData.coldBalance);
-        centerText(balanceStr, 80, &FreeMonoBold18pt7b);
+        // Page content
+        display.setFont(&FreeMonoBold12pt7b);
+        centerText("On-chain Cold", 80, &FreeMonoBold12pt7b);
+        centerText("Storage Balance", 105, &FreeMonoBold12pt7b);
+        
+        // Balance display with comma formatting
+        display.setFont(&FreeMonoBold9pt7b);
+        String balanceStr = utils.formatNumber(balanceData.coldBalance) + " sats";
+        centerText(balanceStr, 140, &FreeMonoBold9pt7b);
         
         // Status
-        display.setFont(&FreeMonoBold9pt7b);
-        centerText(balanceData.coldValid ? "✓ Updated" : "✗ Offline", 120, &FreeMonoBold9pt7b);
-        
-        // QR placeholder
-        display.drawRect(60, 140, 80, 80, GxEPD_BLACK);
-        centerText("QR Code", 185, &FreeMonoBold9pt7b);
+        centerText(balanceData.coldValid ? "✓ Updated" : "✗ Offline", 165, &FreeMonoBold9pt7b);
         
     } while (display.nextPage());
 }
 
-void DisplayManager::drawCombinedBalanceScreen() {
+void DisplayManager::drawTotalBalanceScreen() {
     display.setFullWindow();
     display.firstPage();
     do {
         display.fillScreen(GxEPD_WHITE);
         
-        // Title
+        // WiFi indicator and device title
+        drawWiFiIndicator();
+        drawDeviceTitle();
+        
+        // Page content
         display.setFont(&FreeMonoBold12pt7b);
-        centerText("🐷 TOTAL HODL", 30, &FreeMonoBold12pt7b);
+        centerText("Total Balance", 90, &FreeMonoBold12pt7b);
         
-        // Total balance
-        display.setFont(&FreeMonoBold18pt7b);
-        String balanceStr = formatBalance(balanceData.totalBalance);
-        centerText(balanceStr, 80, &FreeMonoBold18pt7b);
-        
-        // Breakdown
+        // Calculate and display total balance with comma formatting
+        uint64_t total = balanceData.lightningBalance + balanceData.coldBalance;
         display.setFont(&FreeMonoBold9pt7b);
-        String lightningStr = "⚡ " + formatBalance(balanceData.lightningBalance, false);
-        String coldStr = "❄ " + formatBalance(balanceData.coldBalance, false);
-        centerText(lightningStr, 120, &FreeMonoBold9pt7b);
-        centerText(coldStr, 140, &FreeMonoBold9pt7b);
+        String totalStr = utils.formatNumber(total) + " sats";
+        centerText(totalStr, 130, &FreeMonoBold9pt7b);
+        
+        // Status indicator
+        bool bothValid = balanceData.lightningValid && balanceData.coldValid;
+        centerText(bothValid ? "✓ Updated" : "⚠ Partial Data", 155, &FreeMonoBold9pt7b);
         
     } while (display.nextPage());
 }
 
-void DisplayManager::drawConfigInfoScreen(const String& ipAddress) {
-    display.setFullWindow();
-    display.firstPage();
-    do {
-        display.fillScreen(GxEPD_WHITE);
-        
-        display.setFont(&FreeMonoBold12pt7b);
-        centerText("HODLING HOG", 30, &FreeMonoBold12pt7b);
-        centerText("CONFIG MODE", 60, &FreeMonoBold12pt7b);
-        
-        display.setFont(&FreeMonoBold9pt7b);
-        centerText("Connect to WiFi:", 100, &FreeMonoBold9pt7b);
-        centerText("HodlingHog-Config", 120, &FreeMonoBold9pt7b);
-        centerText("Password: hodling123", 140, &FreeMonoBold9pt7b);
-        centerText("Then visit:", 170, &FreeMonoBold9pt7b);
-        centerText(ipAddress, 190, &FreeMonoBold9pt7b);
-        
-    } while (display.nextPage());
-}
 
-void DisplayManager::drawBootScreen() {
-    display.setFullWindow();
-    display.firstPage();
-    do {
-        display.fillScreen(GxEPD_WHITE);
-        
-        display.setFont(&FreeMonoBold18pt7b);
-        centerText("HODLING", 60, &FreeMonoBold18pt7b);
-        centerText("HOG", 90, &FreeMonoBold18pt7b);
-        
-        display.setFont(&FreeMonoBold9pt7b);
-        centerText("🐷⚡", 120, &FreeMonoBold9pt7b);
-        centerText("Saving your future,", 150, &FreeMonoBold9pt7b);
-        centerText("one oink at a time!", 170, &FreeMonoBold9pt7b);
-        
-    } while (display.nextPage());
-}
 
 void DisplayManager::drawErrorScreen(const String& error) {
     display.setFullWindow();
@@ -342,12 +276,16 @@ void DisplayManager::drawErrorScreen(const String& error) {
     do {
         display.fillScreen(GxEPD_WHITE);
         
+        // WiFi indicator
+        drawWiFiIndicator();
+        
         display.setFont(&FreeMonoBold12pt7b);
-        centerText("ERROR", 40, &FreeMonoBold12pt7b);
+        centerText("ERROR", 60, &FreeMonoBold12pt7b);
         
         display.setFont(&FreeMonoBold9pt7b);
-        centerText(error, 80, &FreeMonoBold9pt7b);
-        centerText("Press button to restart", 120, &FreeMonoBold9pt7b);
+        centerText(error, 100, &FreeMonoBold9pt7b);
+        centerText("Press button", 140, &FreeMonoBold9pt7b);
+        centerText("to restart", 165, &FreeMonoBold9pt7b);
         
     } while (display.nextPage());
 }
@@ -416,12 +354,55 @@ void DisplayManager::waitForDisplay() {
     }
 }
 
-// Stub implementations for other drawing methods
-void DisplayManager::drawBalance(uint64_t satoshis, int16_t x, int16_t y, const GFXfont* font) {}
-void DisplayManager::drawQRCode(const String& data, int16_t x, int16_t y, uint8_t scale) {}
-void DisplayManager::drawBitcoinSymbol(int16_t x, int16_t y) {}
-void DisplayManager::drawLightningSymbol(int16_t x, int16_t y) {}
-void DisplayManager::drawWiFiSymbol(int16_t x, int16_t y, bool connected) {}
-void DisplayManager::drawBatterySymbol(int16_t x, int16_t y, uint8_t percentage) {}
-void DisplayManager::drawStatusBar() {}
-void DisplayManager::drawFrame() {} 
+// Helper drawing method implementations
+void DisplayManager::drawDeviceTitle() {
+    // Create title text: "Someone's Hodling Hog" or "My Hodling Hog"
+    String title;
+    if (deviceName == "Hodling Hog" || deviceName.isEmpty()) {
+        title = "My Hodling Hog";
+    } else {
+        title = deviceName + "'s Hodling Hog";
+    }
+    
+    display.setFont(&FreeMonoBold9pt7b);
+    centerText(title, 25, &FreeMonoBold9pt7b);
+    
+    // Draw separator line
+    display.drawLine(20, 35, 180, 35, GxEPD_BLACK);
+}
+
+void DisplayManager::drawWiFiIndicator() {
+    // Draw WiFi symbol in top right corner (185, 15)
+    drawWiFiSymbol(170, 15, wifiConnected);
+}
+
+void DisplayManager::drawWiFiSymbol(int16_t x, int16_t y, bool connected) {
+    if (connected) {
+        // Draw connected WiFi symbol - simple arcs
+        display.drawCircle(x + 15, y + 8, 3, GxEPD_BLACK);   // Center dot
+        display.drawCircle(x + 15, y + 8, 6, GxEPD_BLACK);   // Inner arc
+        display.drawCircle(x + 15, y + 8, 9, GxEPD_BLACK);   // Outer arc
+    } else {
+        // Draw X for disconnected
+        display.drawLine(x + 10, y + 4, x + 20, y + 12, GxEPD_BLACK);
+        display.drawLine(x + 20, y + 4, x + 10, y + 12, GxEPD_BLACK);
+    }
+}
+
+void DisplayManager::drawBalance(uint64_t satoshis, int16_t x, int16_t y, const GFXfont* font) {
+    display.setFont(font);
+    display.setCursor(x, y);
+    display.print(String(satoshis) + " sats");
+}
+
+void DisplayManager::drawBitcoinSymbol(int16_t x, int16_t y) {
+    // Simple Bitcoin symbol - ₿
+    display.setCursor(x, y);
+    display.print("₿");
+}
+
+void DisplayManager::drawLightningSymbol(int16_t x, int16_t y) {
+    // Simple Lightning symbol - ⚡
+    display.setCursor(x, y);
+    display.print("⚡");
+} 

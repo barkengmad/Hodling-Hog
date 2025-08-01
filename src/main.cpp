@@ -44,7 +44,7 @@ void logSystemStatus();
 
 // Setup function - called once at startup
 void setup() {
-    Serial.begin(115200);
+    Serial.begin(9600);
     
     // Add delay for serial monitor
     delay(1000);
@@ -84,7 +84,25 @@ void setup() {
     
     // Initialize display
     displayMgr.init();
-    displayMgr.showBootScreen();
+    
+    // Set initial device setup status and show appropriate screen
+    auto config = settings.getConfig();
+    // Consider setup complete if WiFi credentials are configured
+    bool isSetup = !config.wifi.ssid.isEmpty();
+    
+    displayMgr.setDeviceSetup(isSetup);
+    displayMgr.setDeviceName(config.system.deviceName);
+    displayMgr.setWiFiStatus(false); // Initially disconnected
+    
+    Serial.printf("Device setup status: %s (WiFi SSID: '%s')\n", 
+                  isSetup ? "SETUP" : "NOT_SETUP", config.wifi.ssid.c_str());
+    
+    if (isSetup) {
+        displayMgr.showScreen(ScreenType::LIGHTNING_BALANCE);
+    } else {
+        displayMgr.showScreen(ScreenType::SETUP_WELCOME);
+    }
+    
     Serial.println("Display initialized");
     
     // Initialize input manager
@@ -94,12 +112,21 @@ void setup() {
         
         switch (event) {
             case InputEvent::BUTTON_SHORT_PRESS:
-                core.cycleScreen();
+                Serial.printf("Button short press - Device setup: %s\n", 
+                              displayMgr.isDeviceSetup() ? "YES" : "NO");
+                // Only cycle screens if device is set up
+                if (displayMgr.isDeviceSetup()) {
+                    displayMgr.nextSetupScreen();
+                } else {
+                    Serial.println("Device not set up - button press ignored");
+                }
                 break;
             case InputEvent::BUTTON_LONG_PRESS:
+                Serial.println("Button long press - entering config mode");
                 core.enterConfigMode();
                 break;
             case InputEvent::BUTTON_DOUBLE_CLICK:
+                Serial.println("Button double click - updating balances");
                 core.updateBalances();
                 break;
         }
@@ -235,7 +262,7 @@ void initializeSystem() {
     }
     
     // Setup deep sleep wake sources
-    esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0);  // Button (active low)
+    esp_sleep_enable_ext0_wakeup(GPIO_NUM_21, 0);  // Button (active low)
     esp_sleep_enable_ext1_wakeup(1ULL << GPIO_NUM_2, ESP_EXT1_WAKEUP_ANY_HIGH); // Tilt switch
     
     Serial.println("System initialization completed");
@@ -253,7 +280,7 @@ void handleWiFiConnection() {
                 WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
                 wifiStartTime = millis();
                 wifiConnecting = true;
-                displayMgr.showWiFiStatus(false, "Connecting...");
+                // WiFi status will be shown via indicator on current screen
             }
             
             // Check connection status
@@ -261,6 +288,11 @@ void handleWiFiConnection() {
                 wifiConnected = true;
                 wifiConnecting = false;
                 Serial.printf("WiFi connected! IP: %s\n", WiFi.localIP().toString().c_str());
+                
+                // Mark device as setup and update display
+                displayMgr.setDeviceSetup(true);
+                displayMgr.setWiFiStatus(true);
+                displayMgr.setSetupIP(WiFi.localIP().toString());
                 
                 // Initialize NTP
                 utils.initNTP();
@@ -270,8 +302,8 @@ void handleWiFiConnection() {
                 
                 core.handleStateTransition(SystemState::WIFI_CONNECTED);
                 
-                // Show IP address prominently for 5 seconds
-                displayMgr.showIPAddress(WiFi.localIP().toString(), 5000);
+                // Show Lightning balance screen now that we're connected and setup
+                displayMgr.showScreen(ScreenType::LIGHTNING_BALANCE);
                 
                 // Update lastUpdateTime to prevent immediate balance update
                 lastUpdateTime = millis();
@@ -282,8 +314,12 @@ void handleWiFiConnection() {
                 wifiConnected = false;
                 wifiConnecting = false;
                 WiFi.disconnect();
+                
+                // Update display WiFi status
+                displayMgr.setWiFiStatus(false);
+                displayMgr.showScreen(displayMgr.getCurrentScreen());
+                
                 core.handleStateTransition(SystemState::OFFLINE);
-                displayMgr.showWiFiStatus(false, "Offline");
             }
             break;
             
@@ -292,6 +328,8 @@ void handleWiFiConnection() {
             if (WiFi.status() != WL_CONNECTED) {
                 Serial.println("WiFi connection lost");
                 wifiConnected = false;
+                displayMgr.setWiFiStatus(false);
+                displayMgr.showScreen(displayMgr.getCurrentScreen());
                 core.handleStateTransition(SystemState::WIFI_CONNECTING);
             }
             break;
@@ -300,7 +338,8 @@ void handleWiFiConnection() {
             if (!webInterface.isAPMode()) {
                 Serial.println("Starting configuration AP mode");
                 webInterface.startAPMode();
-                displayMgr.showConfigInfo(webInterface.getAPIP());
+                displayMgr.setSetupIP(webInterface.getAPIP());
+                displayMgr.showScreen(ScreenType::SETUP_WELCOME);
             }
             break;
     }

@@ -55,7 +55,7 @@ A minimalist, low-power Bitcoin piggy bank built on ESP32 with e-paper display. 
 | E-paper | DC | GPIO17 | Data/Command |
 | E-paper | RST | GPIO16 | Reset |
 | E-paper | BUSY | GPIO4 | Busy Status |
-| Button | Input | GPIO0 | Boot mode compatible |
+| Button | Input | GPIO21 | Boot mode compatible |
 | Tilt Switch | Input | GPIO2 | Wake trigger |
 
 ### Optional Components
@@ -235,7 +235,7 @@ When in config mode, the device creates a WiFi access point:
 
 #### Power/Sleep Issues
 ```
-- Check wake pin connections (GPIO0, GPIO2)
+- Check wake pin connections (GPIO21, GPIO2)
 - Verify battery voltage levels
 - Review sleep timeout settings
 - Monitor for memory leaks

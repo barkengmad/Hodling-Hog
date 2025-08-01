@@ -22,11 +22,10 @@
 
 // Screen types
 enum class ScreenType {
-    LIGHTNING_BALANCE,
-    COLD_BALANCE,
-    COMBINED_BALANCE,
-    CONFIG_INFO,
-    BOOT_SCREEN,
+    SETUP_WELCOME,        // Not set up yet - welcome page with IP
+    LIGHTNING_BALANCE,    // Lightning wallet balance page
+    COLD_BALANCE,         // On-chain cold storage balance page
+    TOTAL_BALANCE,        // Total balance page
     ERROR_SCREEN
 };
 
@@ -54,18 +53,24 @@ public:
     void showScreen(ScreenType screen);
     void updateBalances(const BalanceData& balances);
     void updateQRData(const QRData& qrData);
-    void showBootScreen();
     void showErrorScreen(const String& error);
-    void showConfigInfo(const String& ipAddress);
-    void showWiFiStatus(bool connected, const String& status = "");
-    void showIPAddress(const String& ipAddress, uint32_t displayDurationMs = 5000);
     void clear();
     void sleep();
     void wake();
     
-    // Screen cycling
-    void nextScreen();
-    void previousScreen();
+    // Device setup and status
+    void setDeviceSetup(bool isSetup) { deviceSetup = isSetup; }
+    bool isDeviceSetup() const { return deviceSetup; }
+    void setDeviceName(const String& name) { deviceName = name; }
+    void setSetupIP(const String& ip) { setupIP = ip; }
+    
+    // WiFi status
+    void setWiFiStatus(bool connected) { wifiConnected = connected; }
+    bool getWiFiStatus() const { return wifiConnected; }
+    
+    // Screen cycling (only for setup pages)
+    void nextSetupScreen();
+    void previousSetupScreen();
     ScreenType getCurrentScreen() const { return currentScreen; }
     
     // Status and settings
@@ -83,23 +88,26 @@ private:
     bool fastUpdateMode;
     uint8_t displayBrightness;
     
+    // Device and status tracking
+    bool deviceSetup;
+    String deviceName;
+    String setupIP;
+    bool wifiConnected;
+    
     // Screen drawing methods
+    void drawSetupWelcomeScreen();
     void drawLightningBalanceScreen();
     void drawColdBalanceScreen();
-    void drawCombinedBalanceScreen();
-    void drawConfigInfoScreen(const String& ipAddress);
-    void drawBootScreen();
+    void drawTotalBalanceScreen();
     void drawErrorScreen(const String& error);
     
     // Helper drawing methods
+    void drawDeviceTitle();                    // Draw "Someone's Hodling Hog" title
+    void drawWiFiIndicator();                  // Draw WiFi symbol in top right
     void drawBalance(uint64_t satoshis, int16_t x, int16_t y, const GFXfont* font);
-    void drawQRCode(const String& data, int16_t x, int16_t y, uint8_t scale = 2);
+    void drawWiFiSymbol(int16_t x, int16_t y, bool connected);
     void drawBitcoinSymbol(int16_t x, int16_t y);
     void drawLightningSymbol(int16_t x, int16_t y);
-    void drawWiFiSymbol(int16_t x, int16_t y, bool connected);
-    void drawBatterySymbol(int16_t x, int16_t y, uint8_t percentage);
-    void drawStatusBar();
-    void drawFrame();
     
     // Text and formatting helpers
     String formatBalance(uint64_t satoshis, bool showDecimals = true);

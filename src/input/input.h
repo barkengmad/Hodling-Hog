@@ -4,7 +4,7 @@
 #include <Arduino.h>
 
 // Pin definitions for input devices (as specified in requirements)
-#define BUTTON_PIN    0    // GPIO0 - Also usable for boot mode
+#define BUTTON_PIN    21   // GPIO21 - Safe general purpose pin for button input & boot detection
 #define TILT_PIN      2    // GPIO2 - Triggers wake + balance update
 
 // Input configuration
